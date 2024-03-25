@@ -69,6 +69,16 @@ object AuthKeys {
     val tokenKey: ByteArray = config.tokenKey.encodeToByteArray()
 }
 
+fun validateCreds(credential: JWTCredential): JWTPrincipal? {
+    val containsAudience = credential.payload.audience.contains(System.getenv("AUDIENCE"))
+
+    if (containsAudience) {
+        return JWTPrincipal(credential.payload)
+    }
+
+    return null
+}
+
 fun Application.configureSecurity() {
     val webConfig = ConfigManager.getConfig<WebConfig>()
     val oidcConfig = ConfigManager.getConfig<OidcConfiguration>()
@@ -107,7 +117,9 @@ fun Application.configureSecurity() {
                     clientSecret = oidcConfig.clientSecret,
                     accessTokenRequiresBasicAuth = false,
                     requestMethod = HttpMethod.Post,
-                    defaultScopes = oidcConfig.oidcScopes
+                    defaultScopes = oidcConfig.oidcScopes,
+                    extraAuthParameters = listOf("audience" to oidcConfig.audience)
+
                 )
             }
             urlProvider = { "${webConfig.publicBaseUrl}/wallet-api/auth/oidc-session" }
@@ -122,6 +134,12 @@ fun Application.configureSecurity() {
             challenge { defaultScheme, realm ->
                 call.respond(HttpStatusCode.Unauthorized, "Token is not valid or has expired")
             }
+        }
+
+        jwt("auth0") {
+
+            verifier(OidcLoginService.jwkProvider)
+            validate { credential -> validateCreds(credential) }
         }
 
         bearer("auth-bearer") {
