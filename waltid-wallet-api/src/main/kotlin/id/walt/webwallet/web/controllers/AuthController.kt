@@ -27,6 +27,9 @@ import io.github.smiley4.ktorswaggerui.dsl.get
 import io.github.smiley4.ktorswaggerui.dsl.post
 import io.github.smiley4.ktorswaggerui.dsl.route
 import io.ktor.client.*
+import io.ktor.client.call.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.http.auth.*
 import io.ktor.http.parsing.*
@@ -69,15 +72,6 @@ object AuthKeys {
     val tokenKey: ByteArray = config.tokenKey.encodeToByteArray()
 }
 
-fun validateCreds(credential: JWTCredential): JWTPrincipal? {
-    val containsAudience = credential.payload.audience.contains(System.getenv("AUDIENCE"))
-
-    if (containsAudience) {
-        return JWTPrincipal(credential.payload)
-    }
-
-    return null
-}
 
 fun Application.configureSecurity() {
     val webConfig = ConfigManager.getConfig<WebConfig>()
@@ -136,11 +130,6 @@ fun Application.configureSecurity() {
             }
         }
 
-        jwt("auth0") {
-
-            verifier(OidcLoginService.jwkProvider)
-            validate { credential -> validateCreds(credential) }
-        }
 
         bearer("auth-bearer") {
             authenticate { tokenCredential ->
@@ -470,6 +459,21 @@ fun verifyToken(token: String): Result<String> {
         .mapCatching { valid -> if (valid) jwsObject.payload.toString() else throw IllegalArgumentException("Token is not valid.") }
 }
 
+suspend fun getUserInfo(token: String): JsonObject {
+    val client = HttpClient()
+    val userInfo = client.request("https://dev-rv0r7nb07450ieht.us.auth0.com/userinfo") {
+        method = HttpMethod.Get
+        headers {
+            append("Authorization", "Bearer $token")
+        }
+    }.bodyAsText()
+
+    val resonse = Json.decodeFromString<JsonObject>(userInfo)
+
+    return resonse
+
+
+}
 suspend fun PipelineContext<Unit, ApplicationCall>.doLogin() {
     val reqBody = LoginRequestJson.decodeFromString<AccountRequest>(call.receive())
     AccountsService.authenticate("", reqBody)
