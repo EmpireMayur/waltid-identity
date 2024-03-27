@@ -460,8 +460,9 @@ fun verifyToken(token: String): Result<String> {
 }
 
 suspend fun getUserInfo(token: String): JsonObject {
+    val config = ConfigManager.getConfig<OidcConfiguration>()
     val client = HttpClient()
-    val userInfo = client.request("https://dev-rv0r7nb07450ieht.us.auth0.com/userinfo") {
+    val userInfo = client.request(config.userEndpoint) {
         method = HttpMethod.Get
         headers {
             append("Authorization", "Bearer $token")
