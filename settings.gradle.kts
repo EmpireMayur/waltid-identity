@@ -18,6 +18,9 @@ include(
     "waltid-mdoc-credentials",
     "waltid-sdjwt",
 
+    // KMS
+    "waltid-kms-oci",
+
     // Protocols
     "waltid-openid4vc",
 
@@ -32,4 +35,3 @@ include(
     // Reporting
     "waltid-reporting"
 )
-
