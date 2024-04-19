@@ -1,13 +1,12 @@
 package id.walt.webwallet.web.controllers
 
-import com.nimbusds.jose.*
+import com.nimbusds.jose.JWSAlgorithm
+import com.nimbusds.jose.JWSHeader
+import com.nimbusds.jose.JWSObject
+import com.nimbusds.jose.Payload
 import com.nimbusds.jose.crypto.MACSigner
 import com.nimbusds.jose.crypto.MACVerifier
-import id.walt.crypto.keys.KeyType
-import id.walt.crypto.keys.jwk.JWKKey
-import id.walt.crypto.utils.Base64Utils.base64UrlDecode
 import id.walt.crypto.utils.JsonUtils.toJsonElement
-import id.walt.oid4vc.definitions.JWTClaims
 import id.walt.webwallet.config.AuthConfig
 import id.walt.webwallet.config.ConfigManager
 import id.walt.webwallet.config.WebConfig
@@ -39,21 +38,13 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.sessions.*
 import io.ktor.util.*
-import io.ktor.util.Identity.decode
-import io.ktor.util.Identity.encode
 import io.ktor.util.pipeline.*
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
 import kotlinx.uuid.UUID
-import kotlinx.uuid.fromString
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
 import kotlin.collections.set
-import kotlin.io.encoding.Base64
-import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.time.Duration.Companion.days
 
 private val logger = KotlinLogging.logger {}
@@ -452,59 +443,33 @@ fun Application.auth() {
         }
     }
 }
-val SERVER_SIGNING_KEY by lazy { runBlocking { JWKKey.generate(KeyType.RSA) } }
 
 /**
  * @param token JWS token provided by user
  * @return user/account ID if token is valid
  */
-suspend fun verifyToken(token: String): Result<String> {
+fun verifyToken(token: String): Result<String> {
     val jwsObject = JWSObject.parse(token)
     val verifier = MACVerifier(AuthKeys.tokenKey)
 
-    println("SERVER_SIGNING_KEY: ${SERVER_SIGNING_KEY.exportJWK()}")
-    val verified = SERVER_SIGNING_KEY.verifyJws(
-        token
-    )
-    return runCatching { verified }
-
-        .mapCatching { if (verified.isSuccess) {
-
-            Json.parseToJsonElement(jwsObject.payload.toString()).jsonObject["sub"]?.jsonPrimitive?.content.toString()
-        }else throw IllegalArgumentException("Token is not valid.") }
+    return runCatching { jwsObject.verify(verifier) }
+        .mapCatching { valid -> if (valid) jwsObject.payload.toString() else throw IllegalArgumentException("Token is not valid.") }
 }
-
 
 suspend fun PipelineContext<Unit, ApplicationCall>.doLogin() {
     val reqBody = loginRequestJson.decodeFromString<AccountRequest>(call.receive())
-
     AccountsService.authenticate("", reqBody)
         .onSuccess { // FIXME -> TENANT HERE
             // security token mapping was here
-//            val header = JWSHeader.Builder(JWSAlgorithm.RS256)
-//                .keyID("your_key_id_here")
-//                .type(JOSEObjectType.JWT)
-//                .build()
+            val token = JWSObject(JWSHeader(JWSAlgorithm.HS256), Payload(it.id.toString())).apply {
+                sign(MACSigner(AuthKeys.tokenKey))
+            }.serialize()
 
-            val requestJwtHeader = mapOf(JWTClaims.Header.keyID to SERVER_SIGNING_KEY.getPublicKey().getKeyId(), JWTClaims.Header.type to "JWT" )
 
-            val idJson = "{\"sub\":\"${it.id}\"}"
-
-//            val token = JWSObject(header, Payload(idJson)).apply {
-//                sign(MACSigner(AuthKeys.tokenKey))
-//            }.serialize()
-            val requestToken = SERVER_SIGNING_KEY.signJws(idJson.toByteArray(), requestJwtHeader).also {
-                println("Signed JWS: >> $it")
-            }
-
-            println(SERVER_SIGNING_KEY.jwk)
-            println(SERVER_SIGNING_KEY.getPublicKey().jwk)
-
-            call.sessions.set(LoginTokenSession(requestToken))
+            call.sessions.set(LoginTokenSession(token))
             call.response.status(HttpStatusCode.OK)
-            println("respons" +Json.encodeToJsonElement(it).jsonObject.minus("type").plus(Pair("token", it)))
             call.respond(
-                Json.encodeToJsonElement(it).jsonObject.minus("type").plus(Pair("token", requestToken.toJsonElement()))
+                Json.encodeToJsonElement(it).jsonObject.minus("type").plus(Pair("token", token.toJsonElement()))
             )
         }
         .onFailure { call.respond(HttpStatusCode.BadRequest, it.localizedMessage) }
