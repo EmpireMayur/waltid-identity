@@ -18,6 +18,7 @@ import id.walt.webwallet.service.WalletServiceManager
 import id.walt.webwallet.service.WalletServiceManager.oidcConfig
 import id.walt.webwallet.service.account.AccountsService
 import id.walt.webwallet.service.account.KeycloakAccountStrategy
+import id.walt.webwallet.utils.JsonUtils.toJsonPrimitive
 import id.walt.webwallet.web.ForbiddenException
 import id.walt.webwallet.web.InsufficientPermissionsException
 import id.walt.webwallet.web.UnauthorizedException
@@ -504,7 +505,7 @@ suspend fun PipelineContext<Unit, ApplicationCall>.doLogin() {
             call.response.status(HttpStatusCode.OK)
             println("respons" +Json.encodeToJsonElement(it).jsonObject.minus("type").plus(Pair("token", it)))
             call.respond(
-                Json.encodeToJsonElement(it).jsonObject.minus("type").plus(Pair("token", requestToken.toJsonElement()))
+                Json.encodeToJsonElement(it).jsonObject.minus("type").plus(Pair("token", requestToken.toJsonPrimitive()))
             )
         }
         .onFailure { call.respond(HttpStatusCode.BadRequest, it.localizedMessage) }
