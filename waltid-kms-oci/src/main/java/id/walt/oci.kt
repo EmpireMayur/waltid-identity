@@ -27,12 +27,12 @@ import java.lang.Thread.sleep
 
 class oci(
     val id: String,
-
+    val config: OCIsdkMetadata,
     /** public key as JWK */
     private var _publicKey: String? = null,
     private var _keyType: KeyType? = null,
 
-) : Key() {
+    ) : Key() {
 
     @Transient
     override var keyType: KeyType
@@ -48,11 +48,8 @@ class oci(
         val getKeyRequest = GetKeyRequest.builder().keyId(id).build()
         val response = kmsManagementClient.getKey(getKeyRequest)
         val publicKey = getOCIPublicKey(kmsManagementClient, response.key.currentKeyVersion, id)
-       return publicKey
+        return publicKey
     }
-    val compartmentId: String = "ocid1.compartment.oc1..aaaaaaaawirugoz35riiybcxsvf7bmelqsxo3sajaav5w3i2vqowcwqrllxa"
-    val vaultId: String =
-        "ocid1.vault.oc1.eu-frankfurt-1.entbf645aabf2.abtheljshkb6dsuldqf324kitneb63vkz3dfd74dtqvkd5j2l2cxwyvmefeq"
 
     val configurationFilePath: String = "~/.oci/config"
     val profile: String = "DEFAULT"
@@ -66,25 +63,17 @@ class oci(
     // Create KMS clients
     private var kmsVaultClient: KmsVaultClient = KmsVaultClient.builder().build(provider)
 
-    private var vault: Vault = KmsExample.getVaultTest(kmsVaultClient, vaultId)
+    private var vault: Vault = KmsExample.getVaultTest(kmsVaultClient, config.vaultId)
 
     var kmsManagementClient: KmsManagementClient =
         KmsManagementClient.builder().endpoint(vault.managementEndpoint).build(provider)
 
 
-    private var kmsCryptoClient: KmsCryptoClient = KmsCryptoClient.builder().endpoint(vault.cryptoEndpoint).build(provider)
+    private var kmsCryptoClient: KmsCryptoClient =
+        KmsCryptoClient.builder().endpoint(vault.cryptoEndpoint).build(provider)
 
 
-
-
-
-    // Create a key
-    //   Key key = createKeyTest(kmsManagementClient, compartmentId);
-//        String keyId =key.getId();
-//
-//        String keyVersionId = key.getCurrentKeyVersion();
-
-    override fun toString(): String = "[OCI ${keyType.name} key @ ${vaultId}]"
+    override fun toString(): String = "[OCI ${keyType.name} key @ ${config.vaultId}]"
 
 
     override suspend fun getKeyId(): String = getPublicKey().getKeyId()
@@ -99,7 +88,6 @@ class oci(
     override suspend fun exportJWKObject(): JsonObject = Json.parseToJsonElement(_publicKey!!).jsonObject
 
     override suspend fun exportPEM(): String = throw NotImplementedError("PEM export is not available for remote keys.")
-
 
 
     override suspend fun signRaw(plaintext: ByteArray): ByteArray {
@@ -174,16 +162,17 @@ class oci(
 
         }
     }
+
     @Transient
     private var backedKey: Key? = null
 
-    override suspend fun getPublicKey():Key = backedKey ?: when {
+    override suspend fun getPublicKey(): Key = backedKey ?: when {
         _publicKey != null -> _publicKey!!.let { JWKKey.importJWK(it).getOrThrow() }
         else -> retrievePublicKey()
     }.also { newBackedKey -> backedKey = newBackedKey }
 
 
-    override suspend fun getPublicKeyRepresentation():ByteArray = TODO("Not yet implemented")
+    override suspend fun getPublicKeyRepresentation(): ByteArray = TODO("Not yet implemented")
 
     override suspend fun getMeta(): OciKeyMeta = OciKeyMeta(
         keyId = id,
@@ -191,7 +180,7 @@ class oci(
     )
 
 
-    companion object{
+    companion object {
 
         val DEFAULT_KEY_LENGTH: Int = 32
         // The KeyShape used for testing
@@ -212,32 +201,41 @@ class oci(
             else -> throw IllegalArgumentException("Not supported: $type")
         }
 
-         suspend fun generateKey(kmsManagementClient: KmsManagementClient, compartmentId: String ): oci {
+        suspend fun generateKey(kmsManagementClient: KmsManagementClient, config: OCIsdkMetadata): oci {
             println("CreateKey Test")
             val createKeyDetails =
                 CreateKeyDetails.builder()
                     .keyShape(TEST_KEY_SHAPE)
                     .protectionMode(CreateKeyDetails.ProtectionMode.Software)
-                    .compartmentId(compartmentId)
+                    .compartmentId(config.compartmentId)
                     .displayName("WaltKey")
                     .build()
             val createKeyRequest =
                 CreateKeyRequest.builder().createKeyDetails(createKeyDetails).build()
             val response = kmsManagementClient.createKey(createKeyRequest)
-println("Key created: ${response.key}")
+            println("Key created: ${response.key}")
             val keyId = response.key.id
-             println("Key ID: $keyId")
-             val keyVersionId = response.key.currentKeyVersion
-             println("Key Version ID: $keyVersionId")
-             sleep(5000)
-             val publicKey = getOCIPublicKey(kmsManagementClient, keyVersionId ,keyId)
+            println("Key ID: $keyId")
+            val keyVersionId = response.key.currentKeyVersion
+            println("Key Version ID: $keyVersionId")
+            sleep(5000)
+            val publicKey = getOCIPublicKey(kmsManagementClient, keyVersionId, keyId)
 
-             println("Public Key: ${publicKey.exportJWK()}")
-            return oci(keyId, publicKey.exportJWK(), ociKeyToKeyTypeMapping(response.key.keyShape.algorithm.toString().uppercase()))
+            println("Public Key: ${publicKey.exportJWK()}")
+            return oci(
+                keyId,
+                config,
+                publicKey.exportJWK(),
+                ociKeyToKeyTypeMapping(response.key.keyShape.algorithm.toString().uppercase())
+            )
         }
 
 
-         suspend fun getOCIPublicKey(kmsManagementClient: KmsManagementClient, keyVersionId: String, keyId:String): Key {
+        suspend fun getOCIPublicKey(
+            kmsManagementClient: KmsManagementClient,
+            keyVersionId: String,
+            keyId: String
+        ): Key {
             val getKeyRequest = GetKeyVersionRequest.builder().keyVersionId(keyVersionId).keyId(keyId).build()
             val response = kmsManagementClient.getKeyVersion(getKeyRequest)
             val publicKeyPem = response.keyVersion.publicKey
@@ -255,13 +253,7 @@ println("Key created: ${response.key}")
 
 }
 
-suspend fun main(){
-
-    var keyId: String =
-        "ocid1.key.oc1.eu-frankfurt-1.entbf645aabf2.abtheljrvxdlvr75raatjttj2dsprsk7ago7u4cjyssqd7senwqrcew5g5ha"
-
-    var keyVersionId: String =
-        "ocid1.keyversion.oc1.eu-frankfurt-1.entbf645aabf2.bciemypxlkyaa.abtheljr5ovdn5un3xuaktoqtwvzockr6b5edoy6on2p5ejfh4l6xqlotx5q"
+suspend fun main() {
 
     val compartmentId: String = "ocid1.compartment.oc1..aaaaaaaawirugoz35riiybcxsvf7bmelqsxo3sajaav5w3i2vqowcwqrllxa"
     val vaultId: String =
@@ -270,33 +262,30 @@ suspend fun main(){
     val configurationFilePath: String = "~/.oci/config"
     val profile: String = "DEFAULT"
 
-     val configFile: ConfigFileReader.ConfigFile = ConfigFileReader.parseDefault()
+    val configFile: ConfigFileReader.ConfigFile = ConfigFileReader.parseDefault()
 
-     val provider: AuthenticationDetailsProvider =
+    val provider: AuthenticationDetailsProvider =
         ConfigFileAuthenticationDetailsProvider(configFile)
 
 
     // Create KMS clients
-     var kmsVaultClient: KmsVaultClient = KmsVaultClient.builder().build(provider)
+    val kmsVaultClient: KmsVaultClient = KmsVaultClient.builder().build(provider)
 
-     var vault: Vault = KmsExample.getVaultTest(kmsVaultClient, vaultId)
+    val vault: Vault = KmsExample.getVaultTest(kmsVaultClient, vaultId)
 
-    var kmsManagementClient: KmsManagementClient =
+    val kmsManagementClient: KmsManagementClient =
         KmsManagementClient.builder().endpoint(vault.managementEndpoint).build(provider)
 
+    val config = OCIsdkMetadata(vaultId, compartmentId)
 
-     var kmsCryptoClient: KmsCryptoClient = KmsCryptoClient.builder().endpoint(vault.cryptoEndpoint).build(provider)
+    val Testkey = oci.generateKey(kmsManagementClient, config)
 
+    println("Key ID: ${Testkey.id}")
+    println("Key Type: ${Testkey.keyType}")
 
-//    val key = oci.generateKey(kmsManagementClient, compartmentId)
-//    println(key.getPublicKey())
-//    println(key.keyType)
-
-    val keyVersion = getKeyVersion(kmsManagementClient, "ocid1.key.oc1.eu-frankfurt-1.entbf645aabf2.abtheljrvxdlvr75raatjttj2dsprsk7ago7u4cjyssqd7senwqrcew5g5ha")
-    println("Key Version: $keyVersion")
+    println("key version: ${Testkey.getMeta().keyVersion}")
 
 
-    val Testkey = oci("ocid1.key.oc1.eu-frankfurt-1.entbf645aabf2.abtheljrvxdlvr75raatjttj2dsprsk7ago7u4cjyssqd7senwqrcew5g5ha", _keyType = KeyType.secp256r1)
     println("public key: ${Testkey.getPublicKey().exportJWK()}")
     println("public key: ${Testkey.getPublicKey().exportPEM()}")
 
@@ -323,9 +312,8 @@ suspend fun main(){
     )
     println("Sign JWS with TestKey: $signJws")
 
-    val verifyJws =Testkey.verifyJws(signJws)
+    val verifyJws = Testkey.verifyJws(signJws)
     println("Verify JWS with TestKey: $verifyJws")
-
 
 
 }
