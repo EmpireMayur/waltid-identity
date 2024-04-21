@@ -187,7 +187,7 @@ class oci(
     private var backedKey: Key? = null
 
     override suspend fun getPublicKey():Key = backedKey ?: when {
-        _publicKey != null -> _publicKey!!.let { JWKKey.importJWK(it).getOrThrow() }
+        _publicKey != null -> _publicKey!!.let { JWKKey.importPEM(it).getOrThrow() }
         else -> retrievePublicKey()
     }.also { newBackedKey -> backedKey = newBackedKey }
 
